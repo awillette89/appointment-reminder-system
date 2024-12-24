@@ -1,9 +1,17 @@
+import os
 import pandas as pd
 from datetime import datetime, timedelta
-import os
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import smtplib
+import base64
+from google.oauth2 import service_account
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+
+# If modifying these SCOPES, delete the file token.json.
+SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 
 def load_appointments():
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -45,35 +53,55 @@ def create_message(row):
     print(f"Created message for {row['PatientName']}")
     return message
 
-def setup_email():
-    smtp_server = "localhost"
-    port = 1025
-    print(f"Setting up email server at {smtp_server}:{port}")
-    server = smtplib.SMTP(smtp_server, port)
-    print("Email server setup successfully")
-    return server, "sender@example.com"
-
-print("Starting appointment reminder script")
-
-appointments_df = load_appointments()
-tomorrow_apps = get_upcoming_appointments(appointments_df)
-
-server, sender_email = setup_email()
-
-for index, row in tomorrow_apps.iterrows():
-    print(f"\nProcessing appointment for {row['PatientName']}")
-    message = create_message(row)
-    recipient = row['Email']
+def send_email(service, sender_email, recipient_email, subject, message_text):
+    message = MIMEMultipart()
+    message['to'] = recipient_email
+    message['from'] = sender_email
+    message['subject'] = subject
+    message.attach(MIMEText(message_text, 'plain'))
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    body = {'raw': raw}
     try:
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = recipient
-        msg['Subject'] = "Appointment Reminder"
-        msg.attach(MIMEText(message, 'plain'))
-        server.sendmail(sender_email, recipient, msg.as_string())
-        print(f"Reminder sent to {recipient}")
+        message = service.users().messages().send(userId='me', body=body).execute()
+        print(f"Message Id: {message['id']}")
+        return message
     except Exception as e:
-        print(f"Error sending email to {recipient}: {str(e)}")
+        print(f"An error occurred: {e}")
+        return None
 
-server.quit()
-print("\nAll reminders sent.")
+def main():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    credentials_path = os.path.join(script_dir, 'credentials.json')
+    token_path = os.path.join(script_dir, 'token.json')
+
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Credentials file exists: {os.path.exists(credentials_path)}")
+
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(token_path, 'w') as token:
+            token.write(creds.to_json())
+
+    service = build('gmail', 'v1', credentials=creds)
+    sender_email = "YOUREMAILCHANGETHIS@gmail.com"
+
+    appointments_df = load_appointments()
+    tomorrow_apps = get_upcoming_appointments(appointments_df)
+
+    for index, row in tomorrow_apps.iterrows():
+        print(f"\nProcessing appointment for {row['PatientName']}")
+        message_text = create_message(row)
+        recipient_email = row['Email']
+        send_email(service, sender_email, recipient_email, "Appointment Reminder", message_text)
+
+    print("\nAll reminders sent.")
+
+if __name__ == '__main__':
+    main()
