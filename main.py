@@ -42,6 +42,7 @@ def create_message(row):
     This is a friendly reminder of your appointment scheduled for:
     Date: {appointment_date}
     Time: {appointment_time}
+    With: Dr. Willette
 
     Please arrive 15 minutes early to complete any necessary paperwork.
 
